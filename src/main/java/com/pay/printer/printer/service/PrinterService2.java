@@ -30,10 +30,15 @@ public class PrinterService2 {
     private static final byte ETX = 0x03;
     private static final byte ACK = 0x06;
     private static final byte NAK = 0x15;
+    private static final byte DLE = 0x10;
 
-    // 명령어 (예시)
-    private static final byte CMD_PRINT = 0x20;  // 출력 명령
-    private static final byte CMD_STATUS = 0x10; // 상태 확인
+    // 명령어
+    private static final byte CMD_PRINT = 0x20;
+    private static final byte CMD_STATUS = 0x10;
+
+    // 한글 설정 관련
+    private static final byte[] SET_KOREAN = {0x1B, 0x74, 0x03};  // 한글 코드페이지
+    private static final byte[] SET_KOREAN_ALT = {0x1C, 0x26, 0x1B, 0x74, 0x03};
 
     public void print(String text) {
         SerialPort serialPort = null;
@@ -43,18 +48,43 @@ public class PrinterService2 {
                 throw new RuntimeException("포트를 열 수 없습니다.");
             }
 
-            // 텍스트를 바이트 배열로 변환
-            byte[] textBytes = text.getBytes("EUC-KR");
+            // 한글 모드 설정 패킷 전송
+            byte[] koreanPacket = buildPacket((byte) 0x1C, SET_KOREAN);
+            sendPacket(serialPort, koreanPacket);
+            checkResponse(serialPort);
+            Thread.sleep(100);  // 설정 적용 대기
 
-            // 패킷 구성
-            byte[] packet = buildPacket(CMD_PRINT, textBytes);
+            // 텍스트를 라인별로 처리
+            String[] lines = text.split("\n");
+            for (String line : lines) {
+                if (!line.trim().isEmpty()) {
+                    // 다양한 인코딩 시도
+                    byte[] textBytes;
+                    try {
+                        textBytes = line.getBytes("KSC5601");  // 첫 번째 시도
+                    } catch (Exception e) {
+                        try {
+                            textBytes = line.getBytes("MS949");  // 두 번째 시도
+                        } catch (Exception e2) {
+                            textBytes = line.getBytes("EUC-KR");  // 마지막 시도
+                        }
+                    }
 
-            // 패킷 전송 및 응답 대기
-            sendPacket(serialPort, packet);
+                    // 출력 패킷 구성 및 전송
+                    byte[] packet = buildPacket(CMD_PRINT, textBytes);
+                    sendPacket(serialPort, packet);
 
-            // 응답 확인
-            if (!checkResponse(serialPort)) {
-                throw new RuntimeException("프린터 응답 오류");
+                    if (!checkResponse(serialPort)) {
+                        throw new RuntimeException("프린터 응답 오류");
+                    }
+
+                    // 줄바꿈 처리
+                    byte[] newline = {0x0A};
+                    byte[] newlinePacket = buildPacket(CMD_PRINT, newline);
+                    sendPacket(serialPort, newlinePacket);
+                    checkResponse(serialPort);
+                }
+                Thread.sleep(50);  // 라인 간 간격
             }
 
         } catch (Exception e) {
@@ -68,76 +98,90 @@ public class PrinterService2 {
     }
 
     private byte[] buildPacket(byte command, byte[] data) {
-        // 패킷 길이 계산 (STX + LEN + CMD + DATA + ETX + LRC)
-        int length = data.length + 1;  // 명령어 1바이트 포함
-
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        bos.write(STX);  // 시작 문자
+        try {
+            // STX
+            bos.write(STX);
 
-        // 길이 (2바이트)
-        bos.write((length >> 8) & 0xFF);
-        bos.write(length & 0xFF);
+            // 길이 (데이터 길이 + 명령어 1바이트)
+            int length = data.length + 1;
+            bos.write((length >> 8) & 0xFF);
+            bos.write(length & 0xFF);
 
-        bos.write(command);  // 명령어
-        bos.write(data, 0, data.length);  // 데이터
-        bos.write(ETX);  // 종료 문자
+            // 명령어
+            bos.write(command);
 
-        // LRC 계산 및 추가
-        byte[] packet = bos.toByteArray();
-        byte lrc = calculateLRC(packet, 1, packet.length - 1);
-        bos.write(lrc);
+            // 데이터
+            bos.write(data);
 
-        return bos.toByteArray();
+            // ETX
+            bos.write(ETX);
+
+            // LRC
+            byte[] temp = bos.toByteArray();
+            byte lrc = calculateLRC(temp, 1, temp.length - 1);
+            bos.write(lrc);
+
+            return bos.toByteArray();
+
+        } catch (IOException e) {
+            throw new RuntimeException("패킷 생성 실패", e);
+        }
     }
 
     private void sendPacket(SerialPort serialPort, byte[] packet) throws Exception {
-        logBytes("Sending packet", packet);  // 디버깅용 로그
+        logBytes("전송 패킷", packet);
 
-        // 패킷을 작은 단위로 나누어 전송
-        int chunkSize = 32;
+        // 패킷 전송 전 버퍼 클리어
+        serialPort.getOutputStream().flush();
+
+        // 작은 단위로 나누어 전송
+        int chunkSize = 16;  // 더 작은 단위로 조정
         for (int i = 0; i < packet.length; i += chunkSize) {
             int length = Math.min(chunkSize, packet.length - i);
             byte[] chunk = Arrays.copyOfRange(packet, i, i + length);
             serialPort.writeBytes(chunk, length);
-            Thread.sleep(20);  // 전송 간격
+            Thread.sleep(30);  // 전송 간격 증가
         }
+
+        serialPort.getOutputStream().flush();
     }
 
     private boolean checkResponse(SerialPort serialPort) throws Exception {
         byte[] buffer = new byte[1];
         long startTime = System.currentTimeMillis();
 
-        // 응답 대기 (최대 3초)
-        while (System.currentTimeMillis() - startTime < 3000) {
+        while (System.currentTimeMillis() - startTime < 2000) {
             if (serialPort.readBytes(buffer, 1) > 0) {
-                logBytes("Received response", buffer);  // 디버깅용 로그
-                return buffer[0] == ACK;
+                logBytes("수신 응답", buffer);
+                if (buffer[0] == ACK) {
+                    return true;
+                }
+                if (buffer[0] == NAK) {
+                    return false;
+                }
             }
-            Thread.sleep(100);
+            Thread.sleep(50);
         }
 
         return false;
     }
 
-    private byte calculateLRC(byte[] data, int start, int length) {
-        byte lrc = 0;
-        for (int i = start; i < start + length; i++) {
-            lrc ^= data[i];
-        }
-        return lrc;
-    }
-
     private SerialPort openSerialPort() {
         SerialPort serialPort = SerialPort.getCommPort(portName);
 
-        serialPort.setBaudRate(115200);  // 또는 9600
+        serialPort.setBaudRate(9600);  // 속도를 9600으로 변경
         serialPort.setNumDataBits(8);
         serialPort.setNumStopBits(1);
         serialPort.setParity(SerialPort.NO_PARITY);
 
+        // 흐름 제어 설정
+        serialPort.setFlowControl(SerialPort.FLOW_CONTROL_RTS_ENABLED |
+            SerialPort.FLOW_CONTROL_CTS_ENABLED);
+
         serialPort.setComPortTimeouts(
             SerialPort.TIMEOUT_READ_SEMI_BLOCKING |
-            SerialPort.TIMEOUT_WRITE_BLOCKING,
+                SerialPort.TIMEOUT_WRITE_BLOCKING,
             1000,
             1000
         );
@@ -158,5 +202,13 @@ public class PrinterService2 {
             }
             log.debug(sb.toString());
         }
+    }
+
+    private byte calculateLRC(byte[] data, int start, int length) {
+        byte lrc = 0;
+        for (int i = start; i < start + length; i++) {
+            lrc ^= data[i];  // XOR 연산으로 모든 바이트를 누적
+        }
+        return lrc;
     }
 }

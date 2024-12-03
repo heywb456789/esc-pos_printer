@@ -32,7 +32,7 @@ public class PrinterController {
     @PostMapping("/print")
     public String print(@RequestBody PrintRequest request) {
         try {
-            printerService2.print(request.getText());
+            printerService2.testPrinter();
             return "인쇄 성공";
         } catch (Exception e) {
             return "인쇄 실패: " + e.getMessage();

@@ -1,6 +1,8 @@
 package com.pay.printer.printer.service;
 
 import com.fazecast.jSerialComm.SerialPort;
+import java.io.BufferedOutputStream;
+import java.io.IOException;
 import java.util.Arrays;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,96 +19,117 @@ import org.springframework.stereotype.Service;
  */
 @Slf4j
 @Service
-public class PrinterService2 {
-
-
-    // 프린터 명령어
-    private static final byte[] INIT = {0x1B, 0x40};  // 초기화
-    private static final byte[] NEW_LINE = {0x0A};    // 줄바꿈
-    private static final byte[] PAPER_CUT = {0x1D, 0x56, 0x41};  // 용지 커팅
-
-    // KS-1420 한글 모드 설정
-    private static final byte[] KOREAN_START = {
-        0x1B, 0x40,  // 초기화
-        0x1B, 0x74, 0x03,  // 코드페이지 설정
-        0x1C, 0x26   // 한글 모드 시작
-    };
-    private static final byte[] KOREAN_END = {0x1C, 0x2E};
+public class PrinterService {
 
     @Value("${printer.port.name}")
     private String portName;  // application.yml에서 설정
 
+    // 프린터 명령어 정의
+    private static final byte[] INIT = {0x1B, 0x40};  // 프린터 초기화
+    private static final byte[] NEW_LINE = {0x0A};    // 줄바꿈
+    private static final byte[] PAPER_CUT = {0x1D, 0x56, 0x41};  // 용지 자르기
+
+    // 프린터 설정 명령어
+    private static final byte[] SET_KOREAN = {
+        0x1B, 0x40,       // 초기화
+        0x1B, 0x52, 0x0D, // 국제 문자 설정 (한국)
+        0x1B, 0x74, 0x03, // 문자 코드표 설정 (한국)
+        0x1C, 0x71, 0x03  // 한글 코드 설정
+    };
+
+    // 프린터 텍스트 정렬 및 크기 설정
+    private static final byte[] ALIGN_LEFT = {0x1B, 0x61, 0x00};    // 왼쪽 정렬
+    private static final byte[] CHAR_SIZE_NORMAL = {0x1D, 0x21, 0x00};  // 기본 크기
+
     public void print(String text) {
         SerialPort serialPort = null;
+        BufferedOutputStream bos = null;
+
         try {
             serialPort = openSerialPort();
             if (serialPort == null) {
                 throw new RuntimeException("프린터 포트를 열 수 없습니다.");
             }
 
-            // 프린터 초기화
-            write(serialPort, INIT);
+            bos = new BufferedOutputStream(serialPort.getOutputStream());
+
+            // 초기 설정
+            writeToStream(bos, INIT);
             Thread.sleep(100);
 
-            // 한글 모드 시작
-            write(serialPort, new byte[]{0x1B, 0x74, 0x03});
-            Thread.sleep(50);
+            // 한글 설정
+            writeToStream(bos, SET_KOREAN);
+            Thread.sleep(100);
 
-            // 텍스트를 청크로 나누어 전송
-            byte[] textBytes = text.getBytes("EUC-KR");
-            int chunkSize = 256;  // 더 작은 청크 크기 사용
+            // 정렬 및 크기 설정
+            writeToStream(bos, ALIGN_LEFT);
+            writeToStream(bos, CHAR_SIZE_NORMAL);
 
-            for (int i = 0; i < textBytes.length; i += chunkSize) {
-                int length = Math.min(chunkSize, textBytes.length - i);
-                byte[] chunk = Arrays.copyOfRange(textBytes, i, i + length);
-                serialPort.writeBytes(chunk, length);
-                Thread.sleep(50);  // 각 청크 사이 대기 시간 증가
+            // 텍스트 출력 (라인별로 처리)
+            String[] lines = text.split("\n");
+            for (String line : lines) {
+                // 빈 줄 처리
+                if (line.trim().isEmpty()) {
+                    writeToStream(bos, NEW_LINE);
+                    continue;
+                }
+
+                // 일반 텍스트 처리
+                byte[] lineBytes = line.getBytes("EUC-KR");
+                writeToStream(bos, lineBytes);
+                writeToStream(bos, NEW_LINE);
+                bos.flush();
+                Thread.sleep(30);
             }
 
             // 여백 추가
             for (int i = 0; i < 5; i++) {
-                write(serialPort, NEW_LINE);
-                Thread.sleep(20);
+                writeToStream(bos, NEW_LINE);
             }
-
-            // 한글 모드 종료
-            write(serialPort, KOREAN_END);
-            Thread.sleep(100);
+            bos.flush();
+            Thread.sleep(200);
 
             // 용지 커팅
-            write(serialPort, PAPER_CUT);
-            Thread.sleep(200);
+            writeToStream(bos, PAPER_CUT);
+            bos.flush();
 
         } catch (Exception e) {
             log.error("프린터 출력 중 오류 발생", e);
             throw new RuntimeException("프린터 출력 실패", e);
         } finally {
-            if (serialPort != null && serialPort.isOpen()) {
-                try {
-                    serialPort.flushIOBuffers();
-                    Thread.sleep(100);
-                } catch (Exception e) {
-                    log.error("버퍼 비우기 실패", e);
+            // 리소스 정리
+            try {
+                if (bos != null) {
+                    bos.close();
                 }
-                serialPort.closePort();
+                if (serialPort != null && serialPort.isOpen()) {
+                    serialPort.closePort();
+                }
+            } catch (Exception e) {
+                log.error("리소스 정리 중 오류 발생", e);
             }
         }
+    }
+
+    private void writeToStream(BufferedOutputStream bos, byte[] data) throws IOException {
+        bos.write(data);
     }
 
     private SerialPort openSerialPort() {
         SerialPort serialPort = SerialPort.getCommPort(portName);
 
-        // 버퍼 크기 증가 및 통신 설정
         serialPort.setBaudRate(115200);
         serialPort.setNumDataBits(8);
         serialPort.setNumStopBits(1);
         serialPort.setParity(SerialPort.NO_PARITY);
+        // XON/XOFF 흐름 제어 설정
+        serialPort.setFlowControl(SerialPort.FLOW_CONTROL_XONXOFF_IN_ENABLED |
+            SerialPort.FLOW_CONTROL_XONXOFF_OUT_ENABLED);
 
-        // 타임아웃 설정
         serialPort.setComPortTimeouts(
             SerialPort.TIMEOUT_WRITE_BLOCKING,
             0,
-            10000  // 쓰기 타임아웃 증가
+            2000
         );
 
         if (!serialPort.openPort()) {
@@ -117,26 +140,14 @@ public class PrinterService2 {
         return serialPort;
     }
 
-    private void write(SerialPort serialPort, byte[] data) {
-        // 디버깅을 위한 로그 추가
+    // 디버깅을 위한 메소드
+    private void logBytes(String prefix, byte[] data) {
         if (log.isDebugEnabled()) {
-            log.debug("Writing bytes (length=" + data.length + "): " +
-                Arrays.toString(data));
-        }
-
-        // 데이터를 작은 청크로 나누어 전송
-        int chunkSize = 1024;  // 1KB씩 전송
-        for (int i = 0; i < data.length; i += chunkSize) {
-            int length = Math.min(chunkSize, data.length - i);
-            byte[] chunk = Arrays.copyOfRange(data, i, i + length);
-            serialPort.writeBytes(chunk, length);
-
-            try {
-                Thread.sleep(10);  // 각 청크 사이에 약간의 대기 시간
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+            StringBuilder sb = new StringBuilder(prefix);
+            for (byte b : data) {
+                sb.append(String.format("%02X ", b));
             }
+            log.debug(sb.toString());
         }
     }
-
 }

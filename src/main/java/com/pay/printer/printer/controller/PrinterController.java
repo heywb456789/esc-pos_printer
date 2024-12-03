@@ -1,6 +1,7 @@
 package com.pay.printer.printer.controller;
 
 import com.pay.printer.printer.service.PrinterService;
+import com.pay.printer.printer.service.PrinterService2;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -26,11 +27,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class PrinterController {
 
     private final PrinterService printerService;
+    private final PrinterService2 printerService2;
 
     @PostMapping("/print")
     public String print(@RequestBody PrintRequest request) {
         try {
-            printerService.print(request.getText());
+            printerService2.print(request.getText());
             return "인쇄 성공";
         } catch (Exception e) {
             return "인쇄 실패: " + e.getMessage();

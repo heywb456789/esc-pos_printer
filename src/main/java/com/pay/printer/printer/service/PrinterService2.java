@@ -19,7 +19,7 @@ import org.springframework.stereotype.Service;
  */
 @Slf4j
 @Service
-public class PrinterService {
+public class PrinterService2 {
 
     @Value("${printer.port.name}")
     private String portName;  // application.yml에서 설정

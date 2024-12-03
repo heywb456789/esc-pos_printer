@@ -55,7 +55,8 @@ public class PrinterService {
             write(serialPort, KOREAN_MODE);    // 한글 모드
 
             // 텍스트 출력
-            byte[] textBytes = text.getBytes("EUC-KR");
+//            byte[] textBytes = text.getBytes("EUC-KR");
+            byte[] textBytes = text.getBytes("KSC5601");
             write(serialPort, textBytes);
 
             // 충분한 여백 추가 (4~5줄 정도)
@@ -91,6 +92,10 @@ public class PrinterService {
         }
     }
     private void write(SerialPort serialPort, byte[] data) {
+        // 디버깅을 위한 로그 추가
+        if (log.isDebugEnabled()) {
+            log.debug("Writing bytes: " + Arrays.toString(data));
+        }
         serialPort.writeBytes(data, data.length);
     }
     
@@ -98,10 +103,12 @@ public class PrinterService {
         SerialPort serialPort = SerialPort.getCommPort(portName);
         
         // 시리얼 포트 설정
-        serialPort.setBaudRate(9600);
+//        serialPort.setBaudRate(9600);
+        serialPort.setBaudRate(115200);
         serialPort.setNumDataBits(8);
         serialPort.setNumStopBits(1);
         serialPort.setParity(SerialPort.NO_PARITY);
+        serialPort.setFlowControl(SerialPort.FLOW_CONTROL_DISABLED);  // 흐름 제어 없음
         // 타임아웃 설정 수정
         serialPort.setComPortTimeouts(
             SerialPort.TIMEOUT_READ_SEMI_BLOCKING | SerialPort.TIMEOUT_WRITE_BLOCKING,

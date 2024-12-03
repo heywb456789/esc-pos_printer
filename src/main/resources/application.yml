@@ -1,0 +1,15 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: printer
+
+printer:
+  port:
+    name: COM3  # ?? ???? ??? ??? ??
+
+logging:
+  level:
+    root: INFO
+    com.example: DEBUG

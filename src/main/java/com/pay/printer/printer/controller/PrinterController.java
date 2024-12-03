@@ -2,6 +2,7 @@ package com.pay.printer.printer.controller;
 
 import com.pay.printer.printer.service.PrinterService;
 import com.pay.printer.printer.service.PrinterService2;
+import com.pay.printer.printer.service.PrinterService3;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -28,11 +29,14 @@ public class PrinterController {
 
     private final PrinterService printerService;
     private final PrinterService2 printerService2;
+    private final PrinterService3 printerService3;
 
     @PostMapping("/print")
     public String print(@RequestBody PrintRequest request) {
         try {
-            printerService2.testPrinter();
+//            printerService2.testPrinter();
+            printerService3.testWithESCPOS();
+            printerService3.testWithPacket();
             return "인쇄 성공";
         } catch (Exception e) {
             return "인쇄 실패: " + e.getMessage();
